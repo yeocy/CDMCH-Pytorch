@@ -9,7 +9,7 @@ from ddpg_curiosity_mc_her import logger
 from ddpg_curiosity_mc_her.ddpg.her import her_sampler
 from ddpg_curiosity_mc_her.ddpg.models import actor, critic, ForwardDynamics
 from ddpg_curiosity_mc_her.ddpg.normalizer import normalizer
-from ddpg_curiosity_mc_her.ddpg.mpi_utils import sync_networks, sync_grads, sync_grads_partial
+from ddpg_curiosity_mc_her.ddpg.mpi_utils import sync_networks, sync_grads
 from ddpg_curiosity_mc_her.ddpg.replay_buffer import replay_buffer
 import wandb
 
@@ -27,57 +27,25 @@ class DDPG(object):
         self.rollout_batches_per_cycle = params['rollout_batches_per_cycle']
         self.gamma = params[role+'_gamma']
         self.polyak = params[role + '_polyak_tau']
-        self.normalize_observations = params['agents_normalize_observations']
-        self.normalize_goals = params['agents_normalize_goals']
-        self.normalize_returns = params[role + '_normalize_returns']
-        # self.action_noise = params[role + '_action_noise']
-        self.param_noise = params[role + '_param_noise']
-        self.action_range = (-1., 1.)
-        self.return_range = (-np.inf, np.inf)
         self.observation_range = (-5., 5.)
         self.goal_range = (-200, 200)
         self.actor_lr = params[role + '_pi_lr']
         self.critic_lr = params[role + '_Q_lr']
-        self.clip_norm = None
-        self.enable_popart = params[role + '_popart']
-        self.reward_scale = 1.
         self.batch_size = params['batch_size']
-        self.stats_sample = None
-        self.critic_l2_reg = params[role + '_critic_l2_reg']
-        self.agent_hidden_layer_sizes = [params[role + '_hidden']] * params[role + '_layers']
         self.role = role
-        if self.role == 'exploit':
-            self.comm = MPI.COMM_WORLD
-            self.use_goals = True if params['use_her'] else False
-            self.use_intrinsic_reward = False
-            self.dynamics_loss_mapper = None
-            self.mix_external_critic_with_internal = None
-
-        elif self.role == 'explore':
-            self.comm = params['explore_comm']
-            assert self.comm != MPI.COMM_WORLD
-            self.use_intrinsic_reward = True
-            self.dynamics_loss_mapper = params['dynamics_loss_mapper']
-            self.mix_external_critic_with_internal = params['mix_extrinsic_intrinsic_objectives_for_explore']
-            if self.mix_external_critic_with_internal is not None:
-                assert len(self.mix_external_critic_with_internal) == 2
-                self.use_goals = True if params['use_her'] else False
-            else:
-                self.use_goals = False
-
-        assert not (self.use_intrinsic_reward and self.use_goals and self.mix_external_critic_with_internal is None)
+        self.use_goals = True if params['use_her'] else False
 
         self.actor_network = actor(self.env_params, self.use_goals)
         self.critic_network = critic(self.env_params, self.use_goals)
 
-        if self.mix_external_critic_with_internal is not None:
+        if self.role == 'explore':
             self.combined_actor_network = actor(self.env_params, self.use_goals)
         else:
             self.dynamic_network = ForwardDynamics(self.env_params, self.use_goals)
 
         sync_networks(self.actor_network)
         sync_networks(self.critic_network)
-        if self.mix_external_critic_with_internal is not None:
+        if self.role =='explore':
             sync_networks(self.combined_actor_network)
         else:
             sync_networks(self.dynamic_network)
@@ -95,7 +63,7 @@ class DDPG(object):
             self.critic_network.cuda()
             self.actor_target_network.cuda()
             self.critic_target_network.cuda()
-            if self.mix_external_critic_with_internal is not None:
+            if self.role == 'explore':
                 self.combined_actor_network.cuda()
             else:
                 self.dynamic_network.cuda()
@@ -104,7 +72,7 @@ class DDPG(object):
         self.actor_optim = torch.optim.Adam(self.actor_network.parameters(), lr=self.actor_lr)
         self.critic_optim = torch.optim.Adam(self.critic_network.parameters(), lr=self.critic_lr)
 
-        if self.mix_external_critic_with_internal is not None:
+        if self.role =='explore':
             self.combined_actor_optim = torch.optim.Adam(self.combined_actor_network.parameters(), lr=self.actor_lr)
         else:
             self.dynamic_optim = torch.optim.Adam(self.dynamic_network.parameters(), lr=self.actor_lr)
