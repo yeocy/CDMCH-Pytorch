@@ -31,29 +31,17 @@ DEFAULT_PARAMS = {
     'eval_policy_fn': 'greedy_exploit',
     'agent_roles': 'exploit, explore',  # choices are 'explore, explore', 'exploit', and 'explore'
     'memory_type': 'replay_buffer',  # choices are 'replay_buffer' or 'ring_buffer'. 'ring_buffer' can't be used with HER.
-    'separate_explore_ring_buffer': False,
     'heatmaps': False,  # generate heatmaps if using a gym-boxpush or FetchStack environment
     'boxpush_heatmaps': False,  # old argument, doesnt do anything, remaining to not break old scripts
-    'map_dynamics_loss': False,
 
     # networks
-    'exploit_layers': 3,  # number of layers in the critic/actor networks
-    'exploit_hidden': 256,  # number of neurons in each hidden layers
-    'explore_layers': 3,
-    'explore_hidden': 256,
     'exploit_Q_lr': 0.001,  # critic learning rate
     'exploit_pi_lr': 0.001,  # actor learning rate
-    'exploit_critic_l2_reg': 0,
     'explore_Q_lr': 0.001,  # critic learning rate
     'explore_pi_lr': 0.001,  # actor learning rate
-    'explore_critic_l2_reg': 1e-2,
-    'dynamics_layers': 3,
-    'dynamics_hidden': 256,
     'dynamics_lr': 0.007, # dynamics module learning rate
     'exploit_polyak_tau': 0.001,  # polyak averaging coefficient (target_net = (1 - tau) * target_net + tau * main_net)
     'explore_polyak_tau': 0.05,  # polyak averaging coefficient (target_net = (1 - tau) * target_net + tau * main_net)
-    'exploit_use_layer_norm': False,  # User layer normalization in actor critic networks
-    'explore_use_layer_norm': True,  # User layer normalization in actor critic networks
     'exploit_gamma': 'auto',  # 'auto' or floating point number. If auto, gamma is 1 - 1/episode_time_horizon
     'explore_gamma': 'auto',  # 'auto' or floating point number. If auto, gamma is 1 - 1/episode_time_horizon
     'episode_time_horizon': 'auto',  # 'auto' or int. If 'auto' T is inferred from env._max_episode_steps
@@ -67,25 +55,8 @@ DEFAULT_PARAMS = {
     'rollout_batches_per_cycle': 8,
     'rollout_batch_size': 1,  # number of per mpi thread
     'n_test_rollouts': 50,  # number of test rollouts per epoch, each consists of rollout_batch_size rollouts
-
-    # exploration
-    'exploit_noise_type': 'normal_0.04',  # choices are adaptive-param_xx, ou_xx, normal_xx, none
-    'explore_noise_type': 'adaptive-param_0.1, normal_0.04',  # choices are adaptive-param_xx, ou_xx, normal_xx, none
-    'mix_extrinsic_intrinsic_objectives_for_explore': '0.5,0.5',
-    'intrinsic_motivation_method': 'forward_dynamics',  # choices are 'forward_dynamics' or 'random_network_distillation'
-    'num_model_groups': 1,
     'noise_eps' : 0.2,
     'random_eps' : 0.3,
-
-    # normalization
-    'exploit_normalize_returns': True,
-    'exploit_popart': True,
-    'explore_normalize_returns': True,
-    'explore_popart': True,
-    'agents_normalize_observations': True,
-    'agents_normalize_goals': True,
-    'dynamics_normalize_observations': True,
-
 
     # HER
     'use_her': True,
@@ -104,7 +75,6 @@ DEFAULT_PARAMS = {
     # GPU Usage Overrides
     'cuda' : False,
     'num_gpu' : 'none',
-    'split_gpu_usage_among_device_nums': 'none'  # '[0, 1]' (list of gpu device nums) or 'none'
 }
 
 CACHED_ENVS = {}
@@ -150,39 +120,40 @@ def prepare_params(kwargs):
     for gamma_key in ['exploit_gamma', 'explore_gamma']:
         kwargs[gamma_key] = 1. - 1. / kwargs['T'] if kwargs[gamma_key] == 'auto' else float(kwargs[gamma_key])
 
-    if kwargs['map_dynamics_loss'] and 'BoxPush' in kwargs['env_id'] and 'explore' in kwargs['agent_roles']:
-        kwargs['dynamics_loss_mapper'] = DynamicsLossMapper(
-                working_dir=os.path.join(logger.get_dir(), 'dynamics_loss'),
-                sample_env=cached_make_env(kwargs['make_env'])
-            )
-    else:
-        kwargs['dynamics_loss_mapper'] = None
+    # if kwargs['map_dynamics_loss'] and 'BoxPush' in kwargs['env_id'] and 'explore' in kwargs['agent_roles']:
+    #     kwargs['dynamics_loss_mapper'] = DynamicsLossMapper(
+    #             working_dir=os.path.join(logger.get_dir(), 'dynamics_loss'),
+    #             sample_env=cached_make_env(kwargs['make_env'])
+    #         )
+    # else:
+    #     kwargs['dynamics_loss_mapper'] = None
 
-    for network in ['exploit', 'explore']:
-        # Parse noise_type
-        action_noise = None
-        param_noise = None
-        nb_actions = tmp_env.action_space.shape[-1]
-        for current_noise_type in kwargs[network+'_noise_type'].split(','):
-            current_noise_type = current_noise_type.strip()
-            if current_noise_type == 'none':
-                pass
-            elif 'adaptive-param' in current_noise_type:
-                _, stddev = current_noise_type.split('_')
-                param_noise = AdaptiveParamNoiseSpec(initial_stddev=float(stddev), desired_action_stddev=float(stddev))
-            elif 'normal' in current_noise_type:
-                _, stddev = current_noise_type.split('_')
-                action_noise = NormalActionNoise(mu=np.zeros(nb_actions), sigma=float(stddev) * np.ones(nb_actions))
-            elif 'ou' in current_noise_type:
-                _, stddev = current_noise_type.split('_')
-                action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(nb_actions),
-                                                            sigma=float(stddev) * np.ones(nb_actions))
-            else:
-                raise RuntimeError('unknown noise type "{}"'.format(current_noise_type))
-        kwargs[network+'_action_noise'] = action_noise
-        kwargs[network+'_param_noise'] = param_noise
-        del(kwargs[network+'_noise_type'])
+    # for network in ['exploit', 'explore']:
+    #     # Parse noise_type
+    #     action_noise = None
+    #     param_noise = None
+    #     nb_actions = tmp_env.action_space.shape[-1]
+    #     for current_noise_type in kwargs[network+'_noise_type'].split(','):
+    #         current_noise_type = current_noise_type.strip()
+    #         if current_noise_type == 'none':
+    #             pass
+    #         elif 'adaptive-param' in current_noise_type:
+    #             _, stddev = current_noise_type.split('_')
+    #             param_noise = AdaptiveParamNoiseSpec(initial_stddev=float(stddev), desired_action_stddev=float(stddev))
+    #         elif 'normal' in current_noise_type:
+    #             _, stddev = current_noise_type.split('_')
+    #             action_noise = NormalActionNoise(mu=np.zeros(nb_actions), sigma=float(stddev) * np.ones(nb_actions))
+    #         elif 'ou' in current_noise_type:
+    #             _, stddev = current_noise_type.split('_')
+    #             action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(nb_actions),
+    #                                                         sigma=float(stddev) * np.ones(nb_actions))
+    #         else:
+    #             raise RuntimeError('unknown noise type "{}"'.format(current_noise_type))
+    #     kwargs[network+'_action_noise'] = action_noise
+    #     kwargs[network+'_param_noise'] = param_noise
+    #     del(kwargs[network+'_noise_type'])
 
+    #TODO
     kwargs['train_rollout_params'] = {
         'compute_Q': False,
         'render': kwargs['render_training']
@@ -193,12 +164,12 @@ def prepare_params(kwargs):
         'render': kwargs['render_eval']
     }
 
-    if kwargs['mix_extrinsic_intrinsic_objectives_for_explore'] == 'none':
-        kwargs['mix_extrinsic_intrinsic_objectives_for_explore'] = None
-    else:
-        weights_string = kwargs['mix_extrinsic_intrinsic_objectives_for_explore']
-        kwargs['mix_extrinsic_intrinsic_objectives_for_explore'] = [float(w) for w in weights_string.split(',')]
-        assert len(kwargs['mix_extrinsic_intrinsic_objectives_for_explore']) == 2
+    # if kwargs['mix_extrinsic_intrinsic_objectives_for_explore'] == 'none':
+    #     kwargs['mix_extrinsic_intrinsic_objectives_for_explore'] = None
+    # else:
+    #     weights_string = kwargs['mix_extrinsic_intrinsic_objectives_for_explore']
+    #     kwargs['mix_extrinsic_intrinsic_objectives_for_explore'] = [float(w) for w in weights_string.split(',')]
+    #     assert len(kwargs['mix_extrinsic_intrinsic_objectives_for_explore']) == 2
 
     if kwargs['restore_from_ckpt'] == 'none':
         kwargs['restore_from_ckpt'] = None
@@ -222,19 +193,19 @@ def prepare_params(kwargs):
 
         kwargs['sub_goal_divisions'] = sub_goal_divisions
 
-    if kwargs['split_gpu_usage_among_device_nums'] == 'none':
-        kwargs['split_gpu_usage_among_device_nums'] = None
-    else:
-        gpu_string = kwargs['split_gpu_usage_among_device_nums']
-        gpu_nums = ast.literal_eval(gpu_string)
-        assert len(gpu_nums) >= 1
-        for gpu_num in gpu_nums:
-            assert type(gpu_num) == int
-        kwargs['split_gpu_usage_among_device_nums'] = gpu_nums
+    # if kwargs['split_gpu_usage_among_device_nums'] == 'none':
+    #     kwargs['split_gpu_usage_among_device_nums'] = None
+    # else:
+    #     gpu_string = kwargs['split_gpu_usage_among_device_nums']
+    #     gpu_nums = ast.literal_eval(gpu_string)
+    #     assert len(gpu_nums) >= 1
+    #     for gpu_num in gpu_nums:
+    #         assert type(gpu_num) == int
+    #     kwargs['split_gpu_usage_among_device_nums'] = gpu_nums
 
-    original_COMM_WORLD_rank = MPI.COMM_WORLD.Get_rank()
-    kwargs['explore_comm'] = MPI.COMM_WORLD.Split(color=original_COMM_WORLD_rank % kwargs['num_model_groups'],
-                                                  key=original_COMM_WORLD_rank)
+    # original_COMM_WORLD_rank = MPI.COMM_WORLD.Get_rank()
+    # kwargs['explore_comm'] = MPI.COMM_WORLD.Split(color=original_COMM_WORLD_rank % kwargs['num_model_groups'],
+    #                                               key=original_COMM_WORLD_rank)
 
     if kwargs['save_checkpoints_at'] == 'none':
         kwargs['save_checkpoints_at'] = None
